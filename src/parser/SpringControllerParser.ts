@@ -2,9 +2,23 @@ import * as vscode from "vscode";
 import { Buffer } from "buffer";
 import { ApiEndpoint, ApiParameter } from "../types/index.js";
 import { randomUUID } from "crypto";
+import { JavaParser } from './JavaParser';
+import { CharStreams, CommonTokenStream } from "antlr4ts";
+import { JavaLexer } from "./JavaLexer";
+import { ParseTreeWalker } from "antlr4ts/tree";
+import { SpringControllerListener } from "./SpringControllerListener";
+import { CommentListener } from "./CommentListener";
 
 export class SpringControllerParser {
   private code: string = "";
+  private javaParser: JavaParser;
+
+  constructor() {
+    // 创建词法分析器和语法分析器
+    const lexer = new JavaLexer(CharStreams.fromString(""));
+    const tokenStream = new CommonTokenStream(lexer);
+    this.javaParser = new JavaParser(tokenStream);
+  }
 
   async parse(): Promise<ApiEndpoint[]> {
     const files = await this.findControllerFiles();
@@ -14,38 +28,32 @@ export class SpringControllerParser {
       try {
         this.code = await this.readFile(file);
         console.log("解析文件:", file.fsPath);
-        // 解析根路由（第一个requestMapping中的内容）
-        const rootPath = this.parseRootPath();
-        console.log("根路由:", rootPath);
-        const apifoxFolder = this.parseApifoxFolder();
-        console.log("apifoxFolder:", apifoxFolder);
-        // 解析类中的方法的requestMapping中的内容(GetMapping, PostMapping, PutMapping, DeleteMapping, RequestMapping)需要排除第一个
-        const methods = this.parseMethods();
-        for (const method of methods) {
-          const httpMethod = this.parseHttpMethod(method);
-          const methodPath = this.parseMethodPath(method);
-          // 解析方法的注释内容
-          const methodComment = this.parseMethodComment(method);
-          console.log("方法:", methodComment);
-          if (httpMethod) {
-            const parameters = await this.parseParameters(method);
-            const location = this.getMethodLocation(method);
-            endpoints.push({
-              id: randomUUID(),
-              path: this.joinPaths(rootPath, methodPath),
-              method: httpMethod,
-              description: methodComment,
-              parameters: parameters,
-              responseType: this.parseReturnType(method),
-              apifoxFolder: apifoxFolder,
-              location: {
-                filePath: file.fsPath,
-                line: location.line,
-                character: location.character
-              }
-            });
-          }
-        }
+        
+        // 创建词法分析器和token流
+        const chars = CharStreams.fromString(this.code);
+        const lexer = new JavaLexer(chars);
+        const tokens = new CommonTokenStream(lexer);
+        
+        // 创建语法分析器
+        const parser = new JavaParser(tokens);
+        const tree = parser.compilationUnit();
+        
+        // 创建监听器
+        const controllerListener = new SpringControllerListener();
+        const commentListener = new CommentListener(tokens.getTokens(), controllerListener);
+        
+        // 遍历语法树
+        ParseTreeWalker.DEFAULT.walk(controllerListener as any, tree);
+        ParseTreeWalker.DEFAULT.walk(commentListener as any, tree);
+        
+        const fileEndpoints = controllerListener.getEndpoints();
+        
+        // 添加文件位置信息
+        fileEndpoints.forEach((endpoint: ApiEndpoint) => {
+          endpoint.location.filePath = file.fsPath;
+        });
+        
+        endpoints.push(...fileEndpoints);
       } catch (error) {
         console.error("解析失败:", file.fsPath, error);
       }
@@ -53,6 +61,7 @@ export class SpringControllerParser {
 
     return endpoints;
   }
+
   private parseApifoxFolder(): string {
     // 先尝试获取类级别的注释
     const classCommentRegex = /@apiFolder(.*)/;
