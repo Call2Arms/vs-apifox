@@ -8,6 +8,7 @@ import { JavaLexer } from "./JavaLexer";
 import { ParseTreeWalker } from "antlr4ts/tree";
 import { SpringControllerListener } from "./SpringControllerListener";
 import { CommentListener } from "./CommentListener";
+import { OpenAPIGenerator } from "./OpenAPIGenerator.js";
 
 export class SpringControllerParser {
   private code: string = "";
@@ -23,12 +24,14 @@ export class SpringControllerParser {
   async parse(): Promise<ApiEndpoint[]> {
     const files = await this.findControllerFiles();
     const endpoints: ApiEndpoint[] = [];
-
+    // 创建监听器
+    const openapiGenerator = new OpenAPIGenerator();
+    const controllerListener = new SpringControllerListener(openapiGenerator);
     for (const file of files) {
       try {
         this.code = await this.readFile(file);
         console.log("解析文件:", file.fsPath);
-        
+        controllerListener.setFilePath(file.fsPath)
         // 创建词法分析器和token流
         const chars = CharStreams.fromString(this.code);
         const lexer = new JavaLexer(chars);
@@ -38,28 +41,20 @@ export class SpringControllerParser {
         const parser = new JavaParser(tokens);
         const tree = parser.compilationUnit();
         
-        // 创建监听器
-        const controllerListener = new SpringControllerListener();
         const commentListener = new CommentListener(tokens.getTokens(), controllerListener);
         
         // 遍历语法树
-        ParseTreeWalker.DEFAULT.walk(controllerListener as any, tree);
         ParseTreeWalker.DEFAULT.walk(commentListener as any, tree);
+        ParseTreeWalker.DEFAULT.walk(controllerListener as any, tree);
         
-        const fileEndpoints = controllerListener.getEndpoints();
-        
-        // 添加文件位置信息
-        fileEndpoints.forEach((endpoint: ApiEndpoint) => {
-          endpoint.location.filePath = file.fsPath;
-        });
-        
-        endpoints.push(...fileEndpoints);
       } catch (error) {
         console.error("解析失败:", file.fsPath, error);
       }
     }
-
-    return endpoints;
+    if(controllerListener.endpoints.length > 0){
+      controllerListener.endpoints[0].schemas = openapiGenerator.openapi.components.schemas;
+    }
+    return controllerListener.endpoints;
   }
 
   private parseApifoxFolder(): string {
@@ -154,7 +149,7 @@ export class SpringControllerParser {
   }
 
   private async findControllerFiles(): Promise<vscode.Uri[]> {
-    return vscode.workspace.findFiles("**/src/main/java/**/*Controller.java");
+    return vscode.workspace.findFiles("**/src/main/java/**/*.java");
   }
 
   private async findFileByPackagePath(

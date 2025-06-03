@@ -8,6 +8,7 @@ export class OpenAPIGenerator {
         title: "API Documentation",
         version: "1.0.0",
       },
+      title: 'VS-APIFOX',
       paths: {},
       components: {
         schemas: {},
