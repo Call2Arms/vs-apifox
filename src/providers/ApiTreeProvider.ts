@@ -58,14 +58,14 @@ export class ApiTreeProvider implements vscode.TreeDataProvider<ApiTreeItem> {
             }
             return Promise.resolve(apis.map(api => {
                 return new ApiTreeItem(
-                    `${api.method} ${api.path}`,
+                    `${api.method.toUpperCase()} ${api.description || api.path}`,
                     api.id,
                     vscode.TreeItemCollapsibleState.None,
                     'aDfGkMpQrStU',
                     undefined,
                     undefined,
                     this.selectedApis.has(api.id),
-                    api.description
+                    api.path
                 );
             }));
         }
