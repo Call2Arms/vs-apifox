@@ -351,7 +351,10 @@ export class SpringControllerListener implements ParseTreeListener {
       Boolean: "boolean",
       List: "array",
       Map: "object",
-      LocalDateTime: "string"
+      LocalDateTime: "string",
+      LocalDate: "string",
+      LocalTime: "string",
+      Date: "string"
     };
     return typeMap[javaType] || "object";
   }
