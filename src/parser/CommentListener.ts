@@ -148,8 +148,19 @@ export class CommentListener implements ParseTreeListener {
       const startTokenIndex = ctx.start.tokenIndex;
       const comments = this.getLeadingComments(startTokenIndex);
       const processedComments = this.processComments(comments);
-      
-      // 使用字段声明作为 key
+
+      // 提取字段名作为 key（更可靠）
+      const fieldName = ctx.variableDeclarators()
+        ?.variableDeclarator(0)
+        ?.variableDeclaratorId()
+        ?.identifier()
+        ?.text;
+
+      if (fieldName) {
+        this.controllerListener.comments.set(fieldName, processedComments);
+      }
+
+      // 同时保留完整声明作为 key（兼容性）
       const fieldKey = ctx.text;
       this.controllerListener.comments.set(fieldKey, processedComments);
     }

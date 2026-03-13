@@ -49,3 +49,27 @@ export interface Definition {
 export interface Definitions {
     [key: string]: Definition;
 }
+
+export interface EnumValueInfo {
+    name: string;
+    value?: any;
+    description?: string;
+}
+
+export interface EnumDefinition {
+    name: string;
+    values: EnumValueInfo[];
+    description?: string;
+}
+
+export interface EnumSchema {
+    type: "string" | "integer" | "number";
+    enum: any[];
+    "x-enum-descriptions"?: string[];
+    description?: string;
+}
+
+export interface EnumConfig {
+    enumValueSource: 'name' | 'constructor-first-param';
+    enumDescriptionSource: 'name' | 'constructor-second-param';
+}

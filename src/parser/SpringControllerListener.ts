@@ -3,9 +3,11 @@ import { ParseTreeListener } from "antlr4ts/tree";
 import {
   ClassDeclarationContext,
   MethodDeclarationContext,
+  EnumDeclarationContext,
 } from "./JavaParser";
 
-import { ApiEndpoint, ApiParameter } from "../types/index.js";
+import { ApiEndpoint, ApiParameter, EnumDefinition, EnumValueInfo } from "../types/index.js";
+import { ConfigService } from "../services/ConfigService.js";
 
 export class SpringControllerListener implements ParseTreeListener {
   openapi: any;
@@ -15,6 +17,7 @@ export class SpringControllerListener implements ParseTreeListener {
   currentMethod: any;
   comments: Map<string, string[]>; // 改为 Map 类型
   classDefinitions: { [key: string]: any }; // 存储类定义
+  enumDefinitions: { [key: string]: EnumDefinition }; // 存储枚举定义
   endpoints: ApiEndpoint[];
   filePath: string;
 
@@ -33,6 +36,7 @@ export class SpringControllerListener implements ParseTreeListener {
     this.currentMethod = null;
     this.comments = new Map();
     this.classDefinitions = {}; // 存储类定义
+    this.enumDefinitions = {}; // 存储枚举定义
     this.endpoints = [];
     this.filePath = '';
   }
@@ -49,6 +53,12 @@ export class SpringControllerListener implements ParseTreeListener {
 
   // 修改获取参数注释的辅助方法
   private findParamComment(ctx: any, paramName: string): string {
+    // 优先使用字段名查找注释
+    const commentsByName = this.comments.get(paramName);
+    if (commentsByName && commentsByName.length > 0) {
+      return commentsByName[0].replace("//", "").trim();
+    }
+    // 回退到使用 ctx.text 查找
     const comments = this.comments.get(ctx.text);
     return comments && comments.length > 0 ? comments[0].replace("//", "").trim() : "";
   }
@@ -105,7 +115,9 @@ export class SpringControllerListener implements ParseTreeListener {
     } else if (isService || isRepository) {
       // 如果是服务类或者仓储类，则不解析其字段作为 schema
     } else {
-      // 如果是普通类，解析其字段作为 schema
+      // 如果是普通类（DTO/VO），先存储类定义，再解析 schema
+      // 存储类定义供后续嵌套对象引用
+      this.classDefinitions[className] = ctx;
       this.parseClassSchema(className, ctx);
     }
   }
@@ -150,7 +162,7 @@ export class SpringControllerListener implements ParseTreeListener {
           //   type: this.mapJavaTypeToOpenAPI(fieldType),
           //   description: fieldComment ? fieldComment.trim() : "",
           // };
-          schema.properties[fieldName] = this.parseFieldSchema(fieldType, fieldDecl);
+          schema.properties[fieldName] = this.parseFieldSchema(fieldType, fieldDecl, fieldName);
         }
       });
 
@@ -159,55 +171,113 @@ export class SpringControllerListener implements ParseTreeListener {
   }
 
   // 解析字段类型（支持嵌套对象、集合类型和枚举）
-  parseFieldSchema(fieldType: string, decl: any) {
-    const schema: {
-      type?: string;
-      description?: string;
-      items?: any;
-      $ref?: string;
-      enum?: any[];
-    } = {
-      type: this.mapJavaTypeToOpenAPI(fieldType),
-      description: this.findParamComment(decl, fieldType),
-    };
+  parseFieldSchema(fieldType: string, decl: any, fieldName?: string): any {
+    const description = this.findParamComment(decl, fieldName || fieldType);
 
     // 处理集合类型（如 List<User>）
     if (fieldType.startsWith("List<") || fieldType.startsWith("Set<")) {
-      const itemType = fieldType.match(/<([^>]+)>/)?.[1];
+      const itemType = fieldType.match(/<([^>]+)>/g)?.map((match: string) => match.slice(1, -1))[0];
       if (itemType) {
-        schema.type = "array";
-        schema.items = this.parseFieldSchema(itemType, decl);
+        return {
+          type: "array",
+          description,
+          items: this.parseFieldSchema(itemType, decl, fieldName),
+        };
       }
     }
-    // 处理嵌套对象（如 User）
-    else if (/^[A-Z]/.test(fieldType)) {
+
+    // 处理嵌套对象（如 User）- 使用 $ref 时不设置 type
+    if (/^[A-Z]/.test(fieldType)) {
+      // 如果是基本类型的大写形式（如 String, Integer），映射为基本类型
+      const lowerType = fieldType.toLowerCase();
+      if (["string", "integer", "int", "long", "float", "double", "boolean"].includes(lowerType)) {
+        return {
+          type: this.mapJavaTypeToOpenAPI(fieldType),
+          description,
+        };
+      }
+
+      // 日期时间类型
+      if (["localdatetime", "localdate", "localtime", "date"].includes(lowerType)) {
+        return {
+          type: "string",
+          description,
+        };
+      }
+
+      // 对于真正的类对象，使用 $ref 引用
       if (!this.openapi.hasSchema(fieldType)) {
         const classCtx = this.classDefinitions[fieldType];
         if (classCtx) {
           this.parseClassSchema(fieldType, classCtx);
         }
       }
-      // 如果是java的基本类型不需要设置$ref
-      if (
-        !["int", "long", "float", "double", "string", "boolean", "date", "time", "timestamp", "localdatetime"].includes(
-          fieldType.toLocaleLowerCase()
-        )
-      ) {
-        schema.$ref = `#/components/schemas/${fieldType}`;
-      }
-    }
-    // 处理枚举类型
-    else if (fieldType.endsWith("Enum")) {
-      schema.enum = this.parseEnumValues(fieldType);
+
+      // $ref 格式：使用 schema 对象的引用
+      return {
+        $ref: `#/components/schemas/${fieldType}`,
+        description,
+      };
     }
 
-    return schema;
+    // 处理枚举类型
+    if (fieldType.endsWith("Enum")) {
+      return {
+        type: "string",
+        description,
+        enum: this.parseEnumValues(fieldType),
+      };
+    }
+
+    // 其他基本类型
+    return {
+      type: this.mapJavaTypeToOpenAPI(fieldType),
+      description,
+    };
   }
 
-  // 解析枚举值
-  parseEnumValues(enumType: string) {
-    // 在实际项目中，可以通过遍历 AST 查找枚举定义
-    return []; // 这里简化实现
+  parseEnumValues(enumType: string): any[] {
+    const enumDef = this.enumDefinitions[enumType];
+    if (!enumDef) {
+      return [];
+    }
+    
+    const config = ConfigService.getEnumConfig();
+    return enumDef.values.map(v => {
+      if (config.enumValueSource === 'constructor-first-param') {
+        return v.value !== undefined ? v.value : v.name;
+      }
+      return v.name;
+    });
+  }
+
+  enterEnumDeclaration(ctx: EnumDeclarationContext) {
+    const enumName = ctx.identifier().text;
+    const enumValues: EnumValueInfo[] = [];
+    
+    const enumConstants = ctx.enumConstants();
+    if (enumConstants) {
+      enumConstants.enumConstant().forEach((constant: any) => {
+        const name = constant.identifier().text;
+        const args = this.extractConstructorArgs(constant);
+        
+        enumValues.push({
+          name: name,
+          value: args[0],
+          description: args[1]
+        });
+      });
+    }
+    
+    const enumDef: EnumDefinition = {
+      name: enumName,
+      values: enumValues,
+      description: this.getComment(ctx)
+    };
+    
+    this.enumDefinitions[enumName] = enumDef;
+    
+    this.openapi.addEnumSchema(enumName, enumDef);
   }
 
   // 进入方法声明（捕获 @GetMapping/@PostMapping 等）
@@ -423,6 +493,51 @@ export class SpringControllerListener implements ParseTreeListener {
       }
       this.currentMethod = null;
     }
+  }
+
+  extractConstructorArgs(constant: any): any[] {
+    const args: any[] = [];
+    
+    try {
+      const argumentsCtx = constant.arguments();
+      if (argumentsCtx) {
+        const expressionList = argumentsCtx.expressionList();
+        if (expressionList) {
+          expressionList.expression().forEach((expr: any) => {
+            try {
+              const value = this.parseExpressionValue(expr.text);
+              args.push(value);
+            } catch (e) {
+              args.push(null);
+            }
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to extract constructor args:', e);
+    }
+    
+    return args;
+  }
+
+  parseExpressionValue(text: string): any {
+    if (text.startsWith('"') || text.startsWith("'")) {
+      return text.slice(1, -1);
+    }
+    
+    if (/^\d+$/.test(text)) {
+      return parseInt(text, 10);
+    }
+    
+    if (/^\d+\.\d+$/.test(text)) {
+      return parseFloat(text);
+    }
+    
+    if (text === 'true' || text === 'false') {
+      return text === 'true';
+    }
+    
+    return text;
   }
 
 }

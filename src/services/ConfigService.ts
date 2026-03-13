@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { EnumConfig } from '../types/index.js';
 
 export interface ApifoxConfig {
     apiKey: string;
@@ -82,5 +83,14 @@ export class ConfigService {
         // 保存配置
         await this.saveConfig(config);
         return config;
+    }
+
+    static getEnumConfig(): EnumConfig {
+        const config = vscode.workspace.getConfiguration('springApiHelper');
+        
+        return {
+            enumValueSource: config.get('enumValueSource') || 'name',
+            enumDescriptionSource: config.get('enumDescriptionSource') || 'name'
+        };
     }
 } 

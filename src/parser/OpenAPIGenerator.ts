@@ -1,4 +1,7 @@
 // openapi-generator.js
+import { ConfigService } from '../services/ConfigService.js';
+import { EnumDefinition } from '../types/index.js';
+
 export class OpenAPIGenerator {
   openapi: any;
   constructor() {
@@ -32,6 +35,43 @@ export class OpenAPIGenerator {
   // 检查是否已存在 schema
   hasSchema(className: string) {
     return !!this.openapi.components.schemas[className];
+  }
+
+  addEnumSchema(enumName: string, enumDef: EnumDefinition) {
+    const config = ConfigService.getEnumConfig();
+    
+    const enumValues = enumDef.values.map(v => {
+      if (config.enumValueSource === 'constructor-first-param') {
+        return v.value !== undefined ? v.value : v.name;
+      }
+      return v.name;
+    });
+    
+    const descriptions = enumDef.values.map(v => {
+      if (config.enumDescriptionSource === 'constructor-second-param') {
+        return v.description !== undefined ? v.description : v.name;
+      }
+      return v.name;
+    });
+    
+    const schema: any = {
+      type: this.inferEnumType(enumValues),
+      enum: enumValues,
+      "x-enum-descriptions": descriptions,
+      description: enumDef.description
+    };
+    
+    this.openapi.components.schemas[enumName] = schema;
+  }
+
+  inferEnumType(values: any[]): "string" | "integer" | "number" {
+    if (values.every(v => typeof v === 'number' && Number.isInteger(v))) {
+      return 'integer';
+    }
+    if (values.every(v => typeof v === 'number')) {
+      return 'number';
+    }
+    return 'string';
   }
 
   // 生成最终 JSON

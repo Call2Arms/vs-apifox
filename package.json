@@ -2,7 +2,7 @@
   "name": "vs-apifox-helper",
   "displayName": "VS APIFOX Helper",
   "description": "VS APIFOX Helper",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "publisher": "wangrc",
   "engines": {
     "vscode": "^1.80.0"
@@ -30,6 +30,21 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "Spring API Helper",
+      "properties": {
+        "springApiHelper.enumValueSource": {
+          "type": "string",
+          "default": "constructor-first-param",
+          "description": "枚举值来源：'name' 使用枚举名称，'constructor-first-param' 使用构造函数第一个参数"
+        },
+        "springApiHelper.enumDescriptionSource": {
+          "type": "string",
+          "default": "constructor-second-param",
+          "description": "枚举描述来源：'name' 使用枚举名称，'constructor-second-param' 使用构造函数第二个参数"
+        }
+      }
+    },
     "viewsContainers": {
       "activitybar": [
         {
